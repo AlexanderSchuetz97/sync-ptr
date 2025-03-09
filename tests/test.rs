@@ -16,6 +16,16 @@ pub fn test_debug() {
     assert_eq!(format!("{:?}", n), "SendConstPtr(0x0)");
     let n = unsafe { null_mut::<c_void>().as_send_mut() };
     assert_eq!(format!("{:?}", n), "SendMutPtr(0x0)");
+
+    let n = unsafe { null_mut::<c_void>().as_sync_mut() };
+    assert_eq!(format!("{:#?}", n), "SyncMutPtr(\n    0x0000000000000000,\n)");
+    let n = unsafe { null_mut::<c_void>().as_sync_const() };
+    assert_eq!(format!("{:#?}", n), "SyncConstPtr(\n    0x0000000000000000,\n)");
+    let n = unsafe { null_mut::<c_void>().as_send_const() };
+    assert_eq!(format!("{:#?}", n), "SendConstPtr(\n    0x0000000000000000,\n)");
+    let n = unsafe { null_mut::<c_void>().as_send_mut() };
+    assert_eq!(format!("{:#?}", n), "SendMutPtr(\n    0x0000000000000000,\n)");
+
 }
 
 #[test]

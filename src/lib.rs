@@ -44,7 +44,7 @@ use core::ops::Deref;
 /// To make implementation of traits in this library consistent with implementation of same
 /// traits on primitive pointers, we have to manually implement them.
 macro_rules! trait_impl {
-    ($SelfType:ident, $SelfName:literal) => {
+    ($SelfType:ident) => {
         impl<T> Clone for $SelfType<T> {
             #[inline(always)]
             fn clone(&self) -> Self {
@@ -80,11 +80,7 @@ macro_rules! trait_impl {
 
         impl<T> core::fmt::Debug for $SelfType<T> {
             fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-                use core::fmt::Write;
-                f.write_str($SelfName)?;
-                f.write_char('(')?;
-                core::fmt::Debug::fmt(&self.0, f)?;
-                f.write_char(')')
+                f.debug_tuple(stringify!($SelfType)).field(&self.0).finish()
             }
         }
 
@@ -105,7 +101,7 @@ pub struct SyncMutPtr<T>(*mut T);
 unsafe impl<T> Sync for SyncMutPtr<T> {}
 unsafe impl<T> Send for SyncMutPtr<T> {}
 
-trait_impl!(SyncMutPtr, "SyncMutPtr");
+trait_impl!(SyncMutPtr);
 
 impl<T> SyncMutPtr<T> {
     ///
@@ -218,7 +214,7 @@ pub struct SyncConstPtr<T>(*const T);
 unsafe impl<T> Sync for SyncConstPtr<T> {}
 unsafe impl<T> Send for SyncConstPtr<T> {}
 
-trait_impl!(SyncConstPtr, "SyncConstPtr");
+trait_impl!(SyncConstPtr);
 
 impl<T> SyncConstPtr<T> {
     ///
@@ -329,7 +325,7 @@ pub struct SendMutPtr<T>(*mut T);
 
 unsafe impl<T> Send for SendMutPtr<T> {}
 
-trait_impl!(SendMutPtr, "SendMutPtr");
+trait_impl!(SendMutPtr);
 
 impl<T> SendMutPtr<T> {
     ///
@@ -450,7 +446,7 @@ pub struct SendConstPtr<T>(*const T);
 
 unsafe impl<T> Send for SendConstPtr<T> {}
 
-trait_impl!(SendConstPtr, "SendConstPtr");
+trait_impl!(SendConstPtr);
 
 impl<T> SendConstPtr<T> {
     ///
