@@ -1,6 +1,8 @@
 # sync-ptr
 Sync & Send wrappers for raw pointer's in rust.
 
+This crate uses `#![no_std]` and can be used in projects that do not use the rust standard library.
+
 ### Intended use
 This crate is intended for handles or pointers to data behind an FFI boundary 
 that is known to be Send or Sync. 
@@ -83,7 +85,7 @@ fn example() {
 #### Why not just make RustControlStructureThatIsNowSend implement Send directly?
 This is prone to error as once a struct is "unsafe impl Sync" for example it will be Sync no matter what
 struct members get added later. If the initial reason for that unsafe impl was a raw pointer, then 
-the compiler has no opportunity to inform the Human that adding a HashMap to such a struct is maybe not a good idea.
+the compiler has no opportunity to inform the Human that adding a RefCell to such a struct is maybe not a good idea.
 
 In addition, there are sometimes cases where one only needs to 
 send a single pointer and writing an unsafe impl wrapper struct
