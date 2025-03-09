@@ -27,29 +27,83 @@ extern crate alloc;
 use core::fmt::{Formatter, Pointer};
 use core::ops::Deref;
 
+/// Implement common traits for type `SelfT` by forwarding implementation
+/// to underlying pointer.
+///
+/// Rust compiler cannot correctly auto-derive them because it's adding unnecessary
+/// constraint equivalent to:
+///
+/// ```ignore
+/// impl<T: Clone> Clone for SyncMutPtr<T> {...}
+/// ```
+///
+/// It's not consistent with how these traits are implemented in built-in primitive pointers:
+/// for example pointer can be cloned even if underlying type does not implement Clone, because
+/// we are cloning pointer, not value it points to.
+///
+/// To make implementation of traits in this library consistent with implementation of same
+/// traits on primitive pointers, we have to manually implement them.
+macro_rules! trait_impl {
+    ($SelfT:ident) => {
+        impl<T> Clone for $SelfT<T> {
+            #[inline(always)]
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+
+        impl<T> Copy for $SelfT<T> {}
+        impl<T> Pointer for $SelfT<T> {
+            fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+                core::fmt::Pointer::fmt(&self.0, f)
+            }
+        }
+
+        impl<T> Eq for $SelfT<T> {}
+        impl<T> PartialEq for $SelfT<T> {
+            fn eq(&self, other: &Self) -> bool {
+                PartialEq::eq(&self.0, &other.0)
+            }
+        }
+
+        #[allow(clippy::non_canonical_partial_ord_impl)]
+        impl <T> PartialOrd for $SelfT<T> {
+            fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+                PartialOrd::partial_cmp(&self.0, &other.0)
+            }
+        }
+
+        impl<T> Ord for $SelfT<T> {
+            fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+                Ord::cmp(&self.0, &other.0)
+            }
+        }
+
+        impl <T> core::fmt::Debug for $SelfT<T> {
+            fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+                core::fmt::Debug::fmt(&self.0, f)
+            }
+        }
+
+        impl<T> core::hash::Hash for $SelfT<T> {
+            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+                core::hash::Hash::hash(&self.0, state);
+            }
+        }
+
+    };
+}
+
 ///
 /// Wrapped mutable raw pointer that is Send+Sync
 ///
 #[repr(transparent)]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct SyncMutPtr<T>(*mut T);
 
 unsafe impl<T> Sync for SyncMutPtr<T> {}
 unsafe impl<T> Send for SyncMutPtr<T> {}
 
-impl<T> Clone for SyncMutPtr<T> {
-    #[inline(always)]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for SyncMutPtr<T> {}
-impl<T> Pointer for SyncMutPtr<T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Pointer::fmt(&self.0, f)
-    }
-}
+trait_impl!(SyncMutPtr);
 
 impl<T> SyncMutPtr<T> {
     ///
@@ -157,26 +211,12 @@ impl<T> From<SyncMutPtr<T>> for *const T {
 /// Wrapped const raw pointer that is Send+Sync
 ///
 #[repr(transparent)]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct SyncConstPtr<T>(*const T);
 
 unsafe impl<T> Sync for SyncConstPtr<T> {}
 unsafe impl<T> Send for SyncConstPtr<T> {}
 
-impl<T> Clone for SyncConstPtr<T> {
-    #[inline(always)]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for SyncConstPtr<T> {}
-
-impl<T> Pointer for SyncConstPtr<T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Pointer::fmt(&self.0, f)
-    }
-}
+trait_impl!(SyncConstPtr);
 
 impl<T> SyncConstPtr<T> {
     ///
@@ -283,25 +323,11 @@ impl<T> From<SyncConstPtr<T>> for *const T {
 /// Wrapped mutable raw pointer that is Send but not Sync
 ///
 #[repr(transparent)]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct SendMutPtr<T>(*mut T);
 
 unsafe impl<T> Send for SendMutPtr<T> {}
 
-impl<T> Clone for SendMutPtr<T> {
-    #[inline(always)]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for SendMutPtr<T> {}
-
-impl<T> Pointer for SendMutPtr<T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Pointer::fmt(&self.0, f)
-    }
-}
+trait_impl!(SendMutPtr);
 
 impl<T> SendMutPtr<T> {
     ///
@@ -418,25 +444,11 @@ impl<T> From<SendMutPtr<T>> for *const T {
 /// Wrapped const raw pointer that is Send but not Sync
 ///
 #[repr(transparent)]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct SendConstPtr<T>(*const T);
 
 unsafe impl<T> Send for SendConstPtr<T> {}
 
-impl<T> Clone for SendConstPtr<T> {
-    #[inline(always)]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for SendConstPtr<T> {}
-
-impl<T> Pointer for SendConstPtr<T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Pointer::fmt(&self.0, f)
-    }
-}
+trait_impl!(SendConstPtr);
 
 impl<T> SendConstPtr<T> {
     ///
