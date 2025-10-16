@@ -2,7 +2,21 @@
 //! Sync & Send wrappers for raw pointer's in rust.
 //! To use add `use sync_ptr::*;` to your file,
 //! then you should be able to call `my_ptr.as_sync_const()` among others on any raw pointer
-//! to obtain a wrapped version of your raw pointer that is Sync/Send.
+//! to get a wrapped version of your raw pointer that is Sync/Send.
+//!
+//! Example:
+//! ```rust
+//! use std::ffi::c_void;
+//! use sync_ptr::*;
+//!
+//! fn my_func(some_ptr: *mut c_void) {
+//!     let ptr: SyncMutPtr<c_void> = some_ptr.as_sync_mut();
+//!     std::thread::spawn(move || {
+//!         let _some_ptr : *mut c_void = ptr.inner();
+//!     });
+//! }
+//!
+//! ```
 //!
 #![no_std]
 #![deny(clippy::correctness)]
@@ -22,13 +36,12 @@
     clippy::used_underscore_binding
 )]
 #![allow(clippy::inline_always)]
-extern crate alloc;
 
 use core::fmt::{Formatter, Pointer};
 use core::ops::Deref;
 
 /// Implement common traits for type `SelfType` by forwarding implementation
-/// to underlying pointer.
+/// to an underlying pointer.
 ///
 /// Rust compiler cannot correctly auto-derive them because it's adding unnecessary
 /// constraint equivalent to:
@@ -38,10 +51,10 @@ use core::ops::Deref;
 /// ```
 ///
 /// It's not consistent with how these traits are implemented in built-in primitive pointers:
-/// for example pointer can be cloned even if underlying type does not implement Clone, because
-/// we are cloning pointer, not value it points to.
+/// for example, a pointer can be cloned even if the underlying type does not implement Clone, because
+/// we are cloning a pointer, not the value it points to.
 ///
-/// To make implementation of traits in this library consistent with implementation of same
+/// To make the implementation of traits in this library consistent with the implementation of same
 /// traits on primitive pointers, we have to manually implement them.
 macro_rules! trait_impl {
     ($SelfType:ident) => {
@@ -61,18 +74,21 @@ macro_rules! trait_impl {
 
         impl<T> Eq for $SelfType<T> {}
         impl<T> PartialEq for $SelfType<T> {
+            #[inline(always)]
             fn eq(&self, other: &Self) -> bool {
                 PartialEq::eq(&self.0, &other.0)
             }
         }
 
         impl<T> PartialOrd for $SelfType<T> {
+            #[inline(always)]
             fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
                 Some(self.cmp(other))
             }
         }
 
         impl<T> Ord for $SelfType<T> {
+            #[inline(always)]
             fn cmp(&self, other: &Self) -> core::cmp::Ordering {
                 Ord::cmp(&self.0, &other.0)
             }
@@ -85,8 +101,23 @@ macro_rules! trait_impl {
         }
 
         impl<T> core::hash::Hash for $SelfType<T> {
+            #[inline(always)]
             fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
                 core::hash::Hash::hash(&self.0, state);
+            }
+        }
+
+        impl<T> From<$SelfType<T>> for usize {
+            #[inline(always)]
+            fn from(val: $SelfType<T>) -> Self {
+                val.as_address()
+            }
+        }
+
+        impl<T> From<usize> for $SelfType<T> {
+            #[inline(always)]
+            fn from(value: usize) -> Self {
+                Self::from_address(value)
             }
         }
     };
@@ -102,6 +133,35 @@ unsafe impl<T> Sync for SyncMutPtr<T> {}
 unsafe impl<T> Send for SyncMutPtr<T> {}
 
 trait_impl!(SyncMutPtr);
+impl<T> Deref for SyncMutPtr<T> {
+    type Target = *mut T;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> From<*mut T> for SyncMutPtr<T> {
+    #[inline(always)]
+    fn from(value: *mut T) -> Self {
+        Self(value)
+    }
+}
+
+impl<T> From<SyncMutPtr<T>> for *mut T {
+    #[inline(always)]
+    fn from(val: SyncMutPtr<T>) -> Self {
+        val.inner()
+    }
+}
+
+impl<T> From<SyncMutPtr<T>> for *const T {
+    #[inline(always)]
+    fn from(val: SyncMutPtr<T>) -> Self {
+        val.inner()
+    }
+}
 
 impl<T> SyncMutPtr<T> {
     ///
@@ -112,10 +172,40 @@ impl<T> SyncMutPtr<T> {
     /// or special care must be taken when using the wrapped `ptr` to not use it
     /// in any way in other threads.
     ///
+    /// Note: This function is potentially always safe to call, rusts specification does not really make
+    /// it clear why
+    ///
     #[inline(always)]
     #[must_use]
-    pub const unsafe fn new(ptr: *mut T) -> Self {
+    pub const fn new(ptr: *mut T) -> Self {
         Self(ptr)
+    }
+
+    ///
+    /// Returns a `SyncMutPtr` from an arbitrary address.
+    /// This is equivalent to casting `usize as *mut T`
+    ///
+    #[inline(always)]
+    #[must_use]
+    pub const fn from_address(addr: usize) -> Self {
+        Self(addr as *mut T)
+    }
+
+    ///
+    /// Returns the address of the pointer.
+    /// This is equivalent to casting the pointer using `*mut T as usize`.
+    ///
+    /// # Note
+    /// Starting with rust `1.84.0`, the pointer itself
+    /// has the functions `addr` and `expose_provenance`.
+    /// These functions should be used instead.
+    /// They are available via the deref trait.
+    /// This function is roughly equivalent to the `expose_provenance` function.
+    ///
+    #[inline(always)]
+    #[must_use]
+    pub fn as_address(&self) -> usize {
+        self.0 as usize
     }
 
     ///
@@ -137,7 +227,7 @@ impl<T> SyncMutPtr<T> {
     }
 
     ///
-    /// Returns inner `ptr` which is then no longer Send+Sync.
+    /// Returns inner `ptr`, which is then no longer Send+Sync.
     ///
     #[inline(always)]
     #[must_use]
@@ -182,29 +272,6 @@ impl<T> SyncMutPtr<T> {
     }
 }
 
-impl<T> Deref for SyncMutPtr<T> {
-    type Target = *mut T;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> From<SyncMutPtr<T>> for *mut T {
-    #[inline(always)]
-    fn from(val: SyncMutPtr<T>) -> Self {
-        val.inner()
-    }
-}
-
-impl<T> From<SyncMutPtr<T>> for *const T {
-    #[inline(always)]
-    fn from(val: SyncMutPtr<T>) -> Self {
-        val.inner()
-    }
-}
-
 ///
 /// Wrapped const raw pointer that is Send+Sync
 ///
@@ -216,19 +283,71 @@ unsafe impl<T> Send for SyncConstPtr<T> {}
 
 trait_impl!(SyncConstPtr);
 
+impl<T> Deref for SyncConstPtr<T> {
+    type Target = *const T;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> From<*mut T> for SyncConstPtr<T> {
+    #[inline(always)]
+    fn from(value: *mut T) -> Self {
+        Self(value)
+    }
+}
+
+impl<T> From<*const T> for SyncConstPtr<T> {
+    #[inline(always)]
+    fn from(value: *const T) -> Self {
+        Self(value)
+    }
+}
+
+impl<T> From<SyncConstPtr<T>> for *const T {
+    #[inline(always)]
+    fn from(val: SyncConstPtr<T>) -> Self {
+        val.inner()
+    }
+}
+
 impl<T> SyncConstPtr<T> {
     ///
     /// Makes `ptr` Send+Sync
     ///
-    /// # Safety
-    /// The `ptr` parameter must be able to handle being sent and used in other threads concurrently,
-    /// or special care must be taken when using the wrapped `ptr` to not use it
-    /// in any way in other threads.
+    #[inline(always)]
+    #[must_use]
+    pub const fn new(ptr: *const T) -> Self {
+        Self(ptr)
+    }
+
+    ///
+    /// Returns a `SyncConstPtr` from an arbitrary address.
+    /// This is equivalent to casting `usize as *const T`
     ///
     #[inline(always)]
     #[must_use]
-    pub const unsafe fn new(ptr: *const T) -> Self {
-        Self(ptr)
+    pub const fn from_address(addr: usize) -> Self {
+        Self(addr as *mut T)
+    }
+
+    ///
+    /// Returns the address of the pointer.
+    /// This is equivalent to casting the pointer using `*mut T as usize`.
+    ///
+    /// # Note
+    /// Starting with rust `1.84.0`, the pointer itself
+    /// has the functions `addr` and `expose_provenance`.
+    /// These functions should be used instead.
+    /// They are available via the deref trait.
+    /// This function is roughly equivalent to the `expose_provenance` function.
+    ///
+    #[inline(always)]
+    #[must_use]
+    pub fn as_address(&self) -> usize {
+        self.0 as usize
     }
 
     ///
@@ -250,7 +369,7 @@ impl<T> SyncConstPtr<T> {
     }
 
     ///
-    /// Returns inner `ptr` which is then no longer Send+Sync.
+    /// Returns inner `ptr`, which is then no longer Send+Sync.
     ///
     #[inline(always)]
     #[must_use]
@@ -301,22 +420,6 @@ impl<T> SyncConstPtr<T> {
     }
 }
 
-impl<T> Deref for SyncConstPtr<T> {
-    type Target = *const T;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> From<SyncConstPtr<T>> for *const T {
-    #[inline(always)]
-    fn from(val: SyncConstPtr<T>) -> Self {
-        val.inner()
-    }
-}
-
 ///
 /// Wrapped mutable raw pointer that is Send but not Sync
 ///
@@ -327,20 +430,66 @@ unsafe impl<T> Send for SendMutPtr<T> {}
 
 trait_impl!(SendMutPtr);
 
+impl<T> Deref for SendMutPtr<T> {
+    type Target = *mut T;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> From<SendMutPtr<T>> for *mut T {
+    #[inline(always)]
+    fn from(val: SendMutPtr<T>) -> Self {
+        val.inner()
+    }
+}
+
+impl<T> From<SendMutPtr<T>> for *const T {
+    #[inline(always)]
+    fn from(val: SendMutPtr<T>) -> Self {
+        val.inner()
+    }
+}
+
 impl<T> SendMutPtr<T> {
     ///
     /// Makes `ptr` Send
     ///
-    /// # Safety
-    /// The `ptr` parameter must be able to handle being sent to other threads
-    /// or special care must be taken when using the wrapped `ptr` to not use it
-    /// in any way in other threads.
+    #[inline(always)]
+    #[must_use]
+    pub const fn new(ptr: *mut T) -> Self {
+        Self(ptr)
+    }
+
+    ///
+    /// Returns a `SendMutPtr` from an arbitrary address.
+    /// This is equivalent to casting `usize as *mut T`
     ///
     #[inline(always)]
     #[must_use]
-    pub const unsafe fn new(ptr: *mut T) -> Self {
-        Self(ptr)
+    pub const fn from_address(addr: usize) -> Self {
+        Self(addr as *mut T)
     }
+
+    ///
+    /// Returns the address of the pointer.
+    /// This is equivalent to casting the pointer using `*mut T as usize`.
+    ///
+    /// # Note
+    /// Starting with rust `1.84.0`, the pointer itself
+    /// has the functions `addr` and `expose_provenance`.
+    /// These functions should be used instead.
+    /// They are available via the deref trait.
+    /// This function is roughly equivalent to the `expose_provenance` function.
+    ///
+    #[inline(always)]
+    #[must_use]
+    pub fn as_address(&self) -> usize {
+        self.0 as usize
+    }
+
     ///
     /// Makes a Send null ptr.
     ///
@@ -371,14 +520,9 @@ impl<T> SendMutPtr<T> {
     ///
     /// Makes this `ptr` Sync
     ///
-    /// # Safety
-    /// This `ptr` must be able to handle being accessed by multiple threads at the same time,
-    /// or special care must be taken when using the wrapped `ptr` to not use it
-    /// in any way in other threads.
-    ///
     #[inline(always)]
     #[must_use]
-    pub const unsafe fn as_sync_const(&self) -> SyncConstPtr<T> {
+    pub const fn as_sync_const(&self) -> SyncConstPtr<T> {
         SyncConstPtr(self.0)
     }
 
@@ -394,14 +538,9 @@ impl<T> SendMutPtr<T> {
     ///
     /// Makes this `ptr` Sync
     ///
-    /// # Safety
-    /// This `ptr` must be able to handle being accessed by multiple threads at the same time,
-    /// or special care must be taken when using the wrapped `ptr` to not use it
-    /// in any way in other threads.
-    ///
     #[inline(always)]
     #[must_use]
-    pub const unsafe fn as_sync_mut(&self) -> SyncMutPtr<T> {
+    pub const fn as_sync_mut(&self) -> SyncMutPtr<T> {
         SyncMutPtr(self.0)
     }
 
@@ -415,29 +554,6 @@ impl<T> SendMutPtr<T> {
     }
 }
 
-impl<T> Deref for SendMutPtr<T> {
-    type Target = *mut T;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> From<SendMutPtr<T>> for *mut T {
-    #[inline(always)]
-    fn from(val: SendMutPtr<T>) -> Self {
-        val.inner()
-    }
-}
-
-impl<T> From<SendMutPtr<T>> for *const T {
-    #[inline(always)]
-    fn from(val: SendMutPtr<T>) -> Self {
-        val.inner()
-    }
-}
-
 ///
 /// Wrapped const raw pointer that is Send but not Sync
 ///
@@ -448,19 +564,58 @@ unsafe impl<T> Send for SendConstPtr<T> {}
 
 trait_impl!(SendConstPtr);
 
+impl<T> Deref for SendConstPtr<T> {
+    type Target = *const T;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> From<SendConstPtr<T>> for *const T {
+    #[inline(always)]
+    fn from(val: SendConstPtr<T>) -> *const T {
+        val.inner()
+    }
+}
+
 impl<T> SendConstPtr<T> {
     ///
     /// Makes `ptr` Send
     ///
-    /// # Safety
-    /// The `ptr` parameter must be able to handle being sent to other threads
-    /// or special care must be taken when using the wrapped `ptr` to not use it
-    /// in any way in other threads.
+    #[inline(always)]
+    #[must_use]
+    pub const fn new(ptr: *const T) -> Self {
+        Self(ptr)
+    }
+
+    ///
+    /// Returns a `SendConstPtr` from an arbitrary address.
+    /// This is equivalent to casting `usize as *const T`
     ///
     #[inline(always)]
     #[must_use]
-    pub const unsafe fn new(ptr: *const T) -> Self {
-        Self(ptr)
+    pub const fn from_address(addr: usize) -> Self {
+        Self(addr as *mut T)
+    }
+
+    ///
+    /// Returns the address of the pointer.
+    /// This is equivalent to casting the pointer using `*mut T as usize`.
+    ///
+    /// # Note
+    /// Starting with rust `1.84.0`, the pointer itself
+    /// has the functions `addr` and `expose_provenance`.
+    /// These functions should be used instead.
+    /// They are available via the deref trait.
+    /// This function is roughly equivalent to the `expose_provenance` function.
+    ///
+    ///
+    #[inline(always)]
+    #[must_use]
+    pub fn as_address(&self) -> usize {
+        self.0 as usize
     }
 
     ///
@@ -493,14 +648,9 @@ impl<T> SendConstPtr<T> {
     ///
     /// Makes this `ptr` Sync
     ///
-    /// # Safety
-    /// This `ptr` must be able to handle being accessed by multiple threads at the same time,
-    /// or special care must be taken when using the wrapped `ptr` to not use it
-    /// in any way in other threads.
-    ///
     #[inline(always)]
     #[must_use]
-    pub const unsafe fn as_sync_const(&self) -> SyncConstPtr<T> {
+    pub const fn as_sync_const(&self) -> SyncConstPtr<T> {
         SyncConstPtr(self.0)
     }
 
@@ -517,15 +667,11 @@ impl<T> SendConstPtr<T> {
     /// Makes this `ptr` Sync
     ///
     /// # Safety
-    /// This `ptr` must be able to handle being accessed by multiple threads at the same time,
-    /// or special care must be taken when using the wrapped `ptr` to not use it
-    /// in any way in other threads.
-    ///
     /// `ptr` is also marked as mutable. Writing to immutable data is usually UB.
     ///
     #[inline(always)]
     #[must_use]
-    pub const unsafe fn as_sync_mut(&self) -> SyncMutPtr<T> {
+    pub const fn as_sync_mut(&self) -> SyncMutPtr<T> {
         SyncMutPtr(self.0.cast_mut())
     }
 
@@ -542,98 +688,68 @@ impl<T> SendConstPtr<T> {
     }
 }
 
-impl<T> Deref for SendConstPtr<T> {
-    type Target = *const T;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> From<SendConstPtr<T>> for *const T {
-    #[inline(always)]
-    fn from(val: SendConstPtr<T>) -> *const T {
-        val.inner()
-    }
-}
-
+/// Helper trait for every `*const T` and `*mut T` to add fn's to wrap it into a Sync/Send wrapper.
+///
+/// This trait does not need to be implemented directly.
 pub trait FromConstPtr<T>: Sized {
     ///
     /// Makes `self` immutable and Send+Sync
     ///
-    /// # Safety
-    /// `self` must be able to handle being sent to and used concurrently by other threads,
-    /// or special care must be taken when using the wrapped `self` to not use it
-    /// in any way in other threads.
-    ///
-    unsafe fn as_sync_const(&self) -> SyncConstPtr<T>;
+    fn as_sync_const(&self) -> SyncConstPtr<T>;
 
     ///
     /// Makes `self` immutable and Send
     ///
-    /// # Safety
-    /// `self` must be able to handle being sent to other threads
-    /// or special care must be taken when using the wrapped `self` to not use it
-    /// in any way in other threads.
-    ///
-    unsafe fn as_send_const(&self) -> SendConstPtr<T>;
+    fn as_send_const(&self) -> SendConstPtr<T>;
 }
 
+/// Helper trait for every `*mut T` to add fn's to wrap it into a Sync/Send wrapper.
+///
+/// This trait does not need to be implemented directly.
 pub trait FromMutPtr<T>: FromConstPtr<T> {
     ///
     /// Makes `self` Send+Sync
     ///
-    /// # Safety
-    /// `self` must be able to handle being sent to and used concurrently by other threads,
-    /// or special care must be taken when using the wrapped `self` to not use it
-    /// in any way in other threads.
-    ///
-    unsafe fn as_sync_mut(&self) -> SyncMutPtr<T>;
+    fn as_sync_mut(&self) -> SyncMutPtr<T>;
 
     ///
     /// Makes `self` Send
     ///
-    /// # Safety
-    /// `self` must be able to handle being sent to other threads
-    /// or special care must be taken when using the wrapped `self` to not use it
-    /// in any way in other threads.
-    ///
-    unsafe fn as_send_mut(&self) -> SendMutPtr<T>;
+    fn as_send_mut(&self) -> SendMutPtr<T>;
 }
 
 impl<T> FromConstPtr<T> for *const T {
     #[inline(always)]
-    unsafe fn as_sync_const(&self) -> SyncConstPtr<T> {
+    fn as_sync_const(&self) -> SyncConstPtr<T> {
         SyncConstPtr(self.cast())
     }
 
     #[inline(always)]
-    unsafe fn as_send_const(&self) -> SendConstPtr<T> {
+    fn as_send_const(&self) -> SendConstPtr<T> {
         SendConstPtr(self.cast())
     }
 }
 
 impl<T> FromConstPtr<T> for *mut T {
     #[inline(always)]
-    unsafe fn as_sync_const(&self) -> SyncConstPtr<T> {
+    fn as_sync_const(&self) -> SyncConstPtr<T> {
         SyncConstPtr(self.cast())
     }
 
     #[inline(always)]
-    unsafe fn as_send_const(&self) -> SendConstPtr<T> {
+    fn as_send_const(&self) -> SendConstPtr<T> {
         SendConstPtr(self.cast())
     }
 }
 
 impl<T> FromMutPtr<T> for *mut T {
     #[inline(always)]
-    unsafe fn as_sync_mut(&self) -> SyncMutPtr<T> {
+    fn as_sync_mut(&self) -> SyncMutPtr<T> {
         SyncMutPtr(self.cast())
     }
 
     #[inline(always)]
-    unsafe fn as_send_mut(&self) -> SendMutPtr<T> {
+    fn as_send_mut(&self) -> SendMutPtr<T> {
         SendMutPtr(self.cast())
     }
 }

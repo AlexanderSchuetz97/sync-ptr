@@ -1,6 +1,6 @@
 [package]
 name = "sync-ptr"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Alexander Schütz <aschuetz@protonmail.com>"]
@@ -9,5 +9,6 @@ categories = ["data-structures"]
 description = "Sync & Send wrappers for raw pointer's"
 readme = "README.md"
 repository = "https://github.com/AlexanderSchuetz97/sync-ptr"
+rust-version = "1.65.0"
 
 [dependencies]

@@ -4,37 +4,38 @@ extern crate std;
 use alloc::{format, vec};
 use core::ffi::c_void;
 use core::ptr::null_mut;
+use std::mem;
 use sync_ptr::*;
 
 #[test]
 pub fn test_debug() {
-    let n = unsafe { null_mut::<c_void>().as_sync_mut() };
+    let n = null_mut::<c_void>().as_sync_mut();
     assert_eq!(format!("{:?}", n), "SyncMutPtr(0x0)");
-    let n = unsafe { null_mut::<c_void>().as_sync_const() };
+    let n = null_mut::<c_void>().as_sync_const();
     assert_eq!(format!("{:?}", n), "SyncConstPtr(0x0)");
-    let n = unsafe { null_mut::<c_void>().as_send_const() };
+    let n = null_mut::<c_void>().as_send_const();
     assert_eq!(format!("{:?}", n), "SendConstPtr(0x0)");
-    let n = unsafe { null_mut::<c_void>().as_send_mut() };
+    let n = null_mut::<c_void>().as_send_mut();
     assert_eq!(format!("{:?}", n), "SendMutPtr(0x0)");
 
     #[cfg(target_pointer_width = "64")]
     {
-        let n = unsafe { null_mut::<c_void>().as_sync_mut() };
+        let n = null_mut::<c_void>().as_sync_mut();
         assert_eq!(
             format!("{:#?}", n),
             "SyncMutPtr(\n    0x0000000000000000,\n)"
         );
-        let n = unsafe { null_mut::<c_void>().as_sync_const() };
+        let n = null_mut::<c_void>().as_sync_const();
         assert_eq!(
             format!("{:#?}", n),
             "SyncConstPtr(\n    0x0000000000000000,\n)"
         );
-        let n = unsafe { null_mut::<c_void>().as_send_const() };
+        let n = null_mut::<c_void>().as_send_const();
         assert_eq!(
             format!("{:#?}", n),
             "SendConstPtr(\n    0x0000000000000000,\n)"
         );
-        let n = unsafe { null_mut::<c_void>().as_send_mut() };
+        let n = null_mut::<c_void>().as_send_mut();
         assert_eq!(
             format!("{:#?}", n),
             "SendMutPtr(\n    0x0000000000000000,\n)"
@@ -43,13 +44,13 @@ pub fn test_debug() {
 
     #[cfg(target_pointer_width = "32")]
     {
-        let n = unsafe { null_mut::<c_void>().as_sync_mut() };
+        let n = null_mut::<c_void>().as_sync_mut();
         assert_eq!(format!("{:#?}", n), "SyncMutPtr(\n    0x00000000,\n)");
-        let n = unsafe { null_mut::<c_void>().as_sync_const() };
+        let n = null_mut::<c_void>().as_sync_const();
         assert_eq!(format!("{:#?}", n), "SyncConstPtr(\n    0x00000000,\n)");
-        let n = unsafe { null_mut::<c_void>().as_send_const() };
+        let n = null_mut::<c_void>().as_send_const();
         assert_eq!(format!("{:#?}", n), "SendConstPtr(\n    0x00000000,\n)");
-        let n = unsafe { null_mut::<c_void>().as_send_mut() };
+        let n = null_mut::<c_void>().as_send_mut();
         assert_eq!(format!("{:#?}", n), "SendMutPtr(\n    0x00000000,\n)");
     }
 }
@@ -140,29 +141,28 @@ fn example() {
     let data: u64 = 123u64;
 
     let rcs = RustControlStructureThatIsNowSend {
-        some_handle: unsafe { handle.as_send_const() },
+        some_handle: handle.as_send_const(),
         some_rust_data: data,
     };
 
-    unsafe {
-        //Every *const T and *mut T has these fn's now.
-        let _sync_const: SyncConstPtr<c_void> = handle.as_sync_const(); //This is unsafe.
-        let _send_const: SendConstPtr<c_void> = handle.as_send_const(); //This is unsafe.
+    //Every *const T and *mut T has these fn's now.
+    let _sync_const: SyncConstPtr<c_void> = handle.as_sync_const();
+    let _send_const: SendConstPtr<c_void> = handle.as_send_const();
 
-        //Every *mut T has these fn's now.
-        let _sync_mut: SyncMutPtr<c_void> = handle.as_sync_mut(); //This is unsafe.
-        let _send_mut: SendMutPtr<c_void> = handle.as_send_mut(); //This is unsafe.
+    //Every *mut T has these fn's now.
+    let _sync_mut: SyncMutPtr<c_void> = handle.as_sync_mut();
+    let _send_mut: SendMutPtr<c_void> = handle.as_send_mut();
 
-        //The other Ptr types have the same constructors too.
-        let _send_const_null: SendMutPtr<c_void> = SendMutPtr::null(); //This is safe.
-        let _send_const_new: SendMutPtr<c_void> = SendMutPtr::new(null_mut());
-        //This is unsafe.
-    }
+    //The other Ptr types have the same constructors too.
+    let _send_const_null: SendMutPtr<c_void> = SendMutPtr::null();
+    let _send_const_new: SendMutPtr<c_void> = SendMutPtr::new(null_mut());
+    let _from_address: SyncMutPtr<c_void> = SyncMutPtr::from_address(0usize);
 
     std::thread::spawn(move || {
         assert!(rcs.some_handle.is_null()); //Use boxed
         let _unwrapped: *const c_void = rcs.some_handle.inner(); //unwrap if you want
         let _unwrapped2: *const c_void = rcs.some_handle.into(); //Into<*const T> is also implemented. (*mut T too when applicable)
+        let _address: usize = rcs.some_handle.as_address(); //Into<usize> is also implemented.
         let casted: SendConstPtr<usize> = rcs.some_handle.cast::<usize>(); //Cast if you want.
         unsafe {
             if !casted.is_null() {
@@ -175,6 +175,26 @@ fn example() {
     })
     .join()
     .unwrap();
+}
+
+#[test]
+fn test_addr() {
+    let test_addr: *const usize = std::ptr::dangling();
+    let sync = test_addr.as_sync_const();
+    assert_eq!(sync.as_address(), test_addr as usize);
+}
+
+#[inline(always)]
+extern "C" fn test_function() -> u64 {
+    123456u64
+}
+#[test]
+fn test_function_pointer() {
+    let test_fn_ptr: SyncMutPtr<c_void> = SyncMutPtr::new(test_function as *mut c_void);
+    let result =
+        unsafe { mem::transmute::<*mut c_void, extern "C" fn() -> u64>(test_fn_ptr.inner()) }();
+
+    assert_eq!(result, test_function());
 }
 
 #[test]
