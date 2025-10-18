@@ -753,3 +753,453 @@ impl<T> FromMutPtr<T> for *mut T {
         SendMutPtr(self.cast())
     }
 }
+
+/// Function Pointer wrappers module, to allow for easy toggling using the feature flag.
+#[cfg(feature = "fnptr")]
+#[allow(clippy::incompatible_msrv)] //Documented in readme that this needs at least rust v1.85.0
+mod fnptr {
+    use core::fmt::{Debug, Pointer};
+    use core::hash::Hash;
+
+    /// Common function pointer wrapper implementation.
+    macro_rules! impl_pointer {
+        ($SelfType:ident) => {
+            impl<
+                    T: Pointer
+                        + Copy
+                        + Clone
+                        + Sized
+                        + Eq
+                        + PartialEq
+                        + PartialOrd
+                        + Ord
+                        + Hash
+                        + Debug,
+                > Default for $SelfType<T>
+            {
+                fn default() -> Self {
+                    Self(None)
+                }
+            }
+
+            impl<
+                    T: Pointer
+                        + Copy
+                        + Clone
+                        + Sized
+                        + Eq
+                        + PartialEq
+                        + PartialOrd
+                        + Ord
+                        + Hash
+                        + Debug,
+                > core::fmt::Pointer for $SelfType<T>
+            {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    if let Some(r) = self.0.as_ref() {
+                        Pointer::fmt(r, f)
+                    } else {
+                        Pointer::fmt(&core::ptr::null::<()>(), f)
+                    }
+                }
+            }
+            impl<
+                    T: Pointer
+                        + Copy
+                        + Clone
+                        + Sized
+                        + Eq
+                        + PartialEq
+                        + PartialOrd
+                        + Ord
+                        + Hash
+                        + Debug,
+                > core::ops::Deref for $SelfType<T>
+            {
+                type Target = T;
+
+                #[inline(always)]
+                fn deref(&self) -> &Self::Target {
+                    self.0
+                        .as_ref()
+                        .expect("sync_ptr deref attempt to deref null function pointer")
+                }
+            }
+
+            impl<
+                    T: Pointer
+                        + Copy
+                        + Clone
+                        + Sized
+                        + Eq
+                        + PartialEq
+                        + PartialOrd
+                        + Ord
+                        + Hash
+                        + Debug,
+                > core::ops::DerefMut for $SelfType<T>
+            {
+                #[inline(always)]
+                fn deref_mut(&mut self) -> &mut Self::Target {
+                    self.0
+                        .as_mut()
+                        .expect("sync_ptr: deref_mut attempt to deref null function pointer")
+                }
+            }
+
+            impl<
+                    T: Pointer
+                        + Copy
+                        + Clone
+                        + Sized
+                        + Eq
+                        + PartialEq
+                        + PartialOrd
+                        + Ord
+                        + Hash
+                        + Debug,
+                > From<$SelfType<T>> for usize
+            {
+                #[inline(always)]
+                fn from(value: $SelfType<T>) -> Self {
+                    value.as_address()
+                }
+            }
+
+            impl<
+                    T: Pointer
+                        + Copy
+                        + Clone
+                        + Sized
+                        + Eq
+                        + PartialEq
+                        + PartialOrd
+                        + Ord
+                        + Hash
+                        + Debug,
+                > From<$SelfType<T>> for *const core::ffi::c_void
+            {
+                #[inline(always)]
+                fn from(value: $SelfType<T>) -> Self {
+                    value.as_raw_ptr()
+                }
+            }
+
+            impl<
+                    T: Pointer
+                        + Copy
+                        + Clone
+                        + Sized
+                        + Eq
+                        + PartialEq
+                        + PartialOrd
+                        + Ord
+                        + Hash
+                        + Debug,
+                > $SelfType<T>
+            {
+                /// Constructs a null function pointer
+                #[inline(always)]
+                pub const fn null() -> Self {
+                    Self(None)
+                }
+
+                /// Returns the inner representation of the wrapper
+                /// If the option is None then this wrapper was a null pointer.
+                #[inline(always)]
+                pub const fn inner(&self) -> Option<T> {
+                    self.0
+                }
+
+                /// Unwraps the wrapper returning the raw function pointer
+                /// # Panics
+                /// If the wrapper represents a null pointer
+                #[inline(always)]
+                pub const fn unwrap(&self) -> T {
+                    self.0.unwrap()
+                }
+
+                /// Returns the address of the function pointer.
+                /// This is equivalent to doing `raw_fn_ptr as usize` with the exception
+                /// that this function will return 0usize for a null pointer.
+                #[inline(always)]
+                pub const fn as_address(&self) -> usize {
+                    if let Some(r) = self.0.as_ref() {
+                        unsafe { core::mem::transmute_copy::<_, usize>(r) }
+                    } else {
+                        0
+                    }
+                }
+
+                /// Returns the raw pointer representation of the function pointer.
+                /// This is equivalent to doing `raw_fn_ptr as *const c_void` with the exception
+                /// that this function will return null for a null pointer.
+                #[inline(always)]
+                pub const fn as_raw_ptr(&self) -> *const core::ffi::c_void {
+                    if let Some(r) = self.0.as_ref() {
+                        unsafe { core::mem::transmute_copy::<_, *const core::ffi::c_void>(r) }
+                    } else {
+                        core::ptr::null()
+                    }
+                }
+
+                /// Returns true if this wrapper represents a null function pointer.
+                #[inline(always)]
+                pub const fn is_null(&self) -> bool {
+                    self.0.is_none()
+                }
+            }
+        };
+    }
+
+    ///
+    /// This macro creates a Function Pointer that is Send+Sync and guaranteed to have the same representation
+    /// in memory as a raw function pointer would. (Meaning its size is usize)
+    ///
+    /// # Example
+    /// ```rust
+    ///
+    /// use std::ffi::c_void;
+    /// use sync_ptr::sync_fn_ptr;
+    /// use sync_ptr::SyncFnPtr;
+    ///
+    /// extern "C" fn test_function() -> u64 {
+    ///     123456u64
+    /// }
+    ///
+    /// fn some_other_function() {
+    ///     let test_fn_ptr = sync_fn_ptr!(extern "C" fn() -> u64, test_function);
+    ///     //Type of test_fn_ptr is SendFnPtr<extern "C" fn() -> u64>
+    ///     std::thread::spawn(move || {
+    ///         assert_eq!(test_fn_ptr(), test_function());
+    ///     }).join().unwrap();
+    /// }
+    /// ```
+    ///
+    #[macro_export]
+    macro_rules! sync_fn_ptr {
+        ($sig:ty, $var:expr) => {{
+            let x = $var as $sig;
+            _ = move || {
+                //Workaround to ensure T is core::marker::FnPtr, which is unfortunately unstable.
+                _ = core::ptr::fn_addr_eq(x, x);
+            };
+
+            //The compiler should optimize this out, as this should always hold true.
+            assert!(core::mem::size_of::<SyncFnPtr::<$sig>>() == core::mem::size_of::<$sig>());
+
+            //Safety: SyncFnPtr has repr(transparent)
+            let n: SyncFnPtr<$sig> = unsafe { core::mem::transmute(Some(x)) };
+
+            n
+        }};
+    }
+
+    ///
+    /// This macro creates a Function Pointer that is Send+Sync and guaranteed to have the same representation
+    /// in memory as a raw function pointer would. (Meaning its size is usize)
+    ///
+    /// # Null
+    /// This will not cause undefined behavior if a null pointer is used to create the function pointer.
+    /// Unlike ordinary rust function pointers this type supports null pointers.
+    /// Attempting to call a null function pointer will panic.
+    ///
+    /// # Safety
+    /// This macro has to be placed in an unsafe block, because it accepts an arbitrary pointer as well as usize.
+    /// The pointer/usize is interpreted as an address to a function. Should the pointer/usize not in fact be the address
+    /// of a function with the given signature then this macro causes undefined behavior immediately.
+    ///
+    /// The safe version of this macro is `sync_fn_ptr!` which only accepts a rust function type.
+    ///
+    /// # Example
+    /// ```rust
+    ///
+    /// use std::ffi::c_void;
+    /// use sync_ptr::sync_fn_ptr_from_addr;
+    /// use sync_ptr::SyncFnPtr;
+    ///
+    /// extern "C" fn test_function() -> u64 {
+    ///     123456u64
+    /// }
+    ///
+    /// fn some_function() {
+    ///     //usually you would get this address from ffi/dlsym/GetProcAddress.
+    ///     let some_address = test_function as *const c_void;
+    ///     let test_fn_ptr = unsafe { sync_fn_ptr_from_addr!(extern "C" fn() -> u64, some_address) };
+    ///     //Type of test_fn_ptr is SyncFnPtr<extern "C" fn() -> u64>
+    ///     std::thread::spawn(move || {
+    ///         assert_eq!(test_fn_ptr(), test_function());
+    ///     }).join().unwrap();
+    /// }
+    /// ```
+    ///
+    #[macro_export]
+    macro_rules! sync_fn_ptr_from_addr {
+    ($sig:ty, $var:expr) => {
+        {
+            //The compiler should optimize this out, as this should always hold true.
+            assert!(core::mem::size_of::<SyncFnPtr::<$sig>>() == core::mem::size_of::<$sig>());
+
+            let ptr = $var as *const core::ffi::c_void;
+            if ptr.is_null() {
+                SyncFnPtr::<$sig>::default()
+            } else {
+                //Safety: Only safe if var is a function pointer.
+                let x : $sig = core::mem::transmute($var as *const core::ffi::c_void);
+
+                _ = move || {
+                    //Workaround to ensure T is core::marker::FnPtr, which is unfortunately unstable.
+                    _= core::ptr::fn_addr_eq(x, x);
+                };
+
+                //Safety: SyncFnPtr has repr(transparent)
+                core::mem::transmute(Some(x))
+            }
+        }
+
+    };
+}
+
+    #[repr(transparent)]
+    #[derive(Copy, Clone, Ord, PartialOrd, Hash, Debug, Eq, PartialEq)]
+    pub struct SyncFnPtr<
+        T: Pointer + Copy + Clone + Sized + Eq + PartialEq + PartialOrd + Ord + Hash + Debug,
+    >(Option<T>);
+    unsafe impl<T: Pointer + Copy + Clone + Sized + Eq + PartialEq + PartialOrd + Ord + Hash + Debug>
+        Sync for SyncFnPtr<T>
+    {
+    }
+    unsafe impl<T: Pointer + Copy + Clone + Sized + Eq + PartialEq + PartialOrd + Ord + Hash + Debug>
+        Send for SyncFnPtr<T>
+    {
+    }
+
+    impl_pointer!(SyncFnPtr);
+
+    ///
+    /// This macro creates a Function Pointer that is Send and guaranteed to have the same representation
+    /// in memory as a raw function pointer would. (Meaning its size is usize)
+    ///
+    /// # Example
+    /// ```rust
+    ///
+    /// use std::ffi::c_void;
+    /// use sync_ptr::send_fn_ptr;
+    /// use sync_ptr::SendFnPtr;
+    ///
+    /// extern "C" fn test_function() -> u64 {
+    ///     123456u64
+    /// }
+    ///
+    /// fn some_function() {
+    ///     let test_fn_ptr = send_fn_ptr!(extern "C" fn() -> u64, test_function);
+    ///     //Type of test_fn_ptr is SendFnPtr<extern "C" fn() -> u64>
+    ///     std::thread::spawn(move || {
+    ///         assert_eq!(test_fn_ptr(), test_function());
+    ///     }).join().unwrap();
+    /// }
+    /// ```
+    ///
+    #[macro_export]
+    macro_rules! send_fn_ptr {
+        ($sig:ty, $var:expr) => {{
+            let x = $var as $sig;
+            _ = move || {
+                //Workaround to ensure T is core::marker::FnPtr, which is unfortunately unstable.
+                _ = core::ptr::fn_addr_eq(x, x);
+            };
+
+            //The compiler should optimize this out, as this should always hold true.
+            assert!(core::mem::size_of::<SendFnPtr::<$sig>>() == core::mem::size_of::<$sig>());
+
+            //Safety: SyncFnPtr has repr(transparent)
+            let n: SendFnPtr<$sig> = unsafe { core::mem::transmute(Some(x)) };
+
+            n
+        }};
+    }
+
+    ///
+    /// This macro creates a Function Pointer that is Send and guaranteed to have the same representation
+    /// in memory as a raw function pointer would. (Meaning its size is usize)
+    ///
+    /// # Null
+    /// This will not cause undefined behavior if a null pointer is used to create the function pointer.
+    /// Unlike ordinary rust function pointers this type supports null pointers.
+    /// Attempting to call a null function pointer will panic.
+    ///
+    /// # Safety
+    /// This macro has to be placed in an unsafe block, because it accepts an arbitrary pointer as well as usize.
+    /// The pointer/usize is interpreted as an address to a function. Should the pointer/usize not in fact be the address
+    /// of a function with the given signature then this macro causes undefined behavior immediately.
+    ///
+    /// The safe version of this macro is `sync_fn_ptr!` which only accepts a rust function type.
+    ///
+    /// # Example
+    /// ```rust
+    ///
+    /// use std::ffi::c_void;
+    /// use sync_ptr::send_fn_ptr_from_addr;
+    /// use sync_ptr::SendFnPtr;
+    ///
+    /// extern "C" fn test_function() -> u64 {
+    ///     123456u64
+    /// }
+    ///
+    /// fn some_function() {
+    ///     //usually you would get this address from ffi/dlsym/GetProcAddress.
+    ///     let some_address = test_function as *const c_void;
+    ///     let test_fn_ptr = unsafe { send_fn_ptr_from_addr!(extern "C" fn() -> u64, some_address) };
+    ///     //Type of test_fn_ptr is SendFnPtr<extern "C" fn() -> u64>
+    ///     std::thread::spawn(move || {
+    ///         assert_eq!(test_fn_ptr(), test_function());
+    ///     }).join().unwrap();
+    /// }
+    /// ```
+    #[macro_export]
+    macro_rules! send_fn_ptr_from_addr {
+    ($sig:ty, $var:expr) => {
+        {
+            //The compiler should optimize this out, as this should always hold true.
+            assert!(core::mem::size_of::<SendFnPtr::<$sig>>() == core::mem::size_of::<$sig>());
+
+            let ptr = $var as *const core::ffi::c_void;
+            if ptr.is_null() {
+                SendFnPtr::<$sig>::default()
+            } else {
+                //Safety: Only safe if var is a function pointer.
+                let x : $sig = core::mem::transmute($var as *const core::ffi::c_void);
+
+                _ = move || {
+                    //Workaround to ensure T is core::marker::FnPtr, which is unfortunately unstable.
+                    _= core::ptr::fn_addr_eq(x, x);
+                };
+
+                //Safety: SendFnPtr has repr(transparent)
+                core::mem::transmute(Some(x))
+            }
+        }
+
+    };
+}
+
+    #[repr(transparent)]
+    #[derive(Copy, Clone, Ord, PartialOrd, Hash, Debug, Eq, PartialEq)]
+    pub struct SendFnPtr<
+        T: Pointer + Copy + Clone + Sized + Eq + PartialEq + PartialOrd + Ord + Hash + Debug,
+    >(Option<T>);
+    unsafe impl<T: Pointer + Copy + Clone + Sized + Eq + PartialEq + PartialOrd + Ord + Hash + Debug>
+        Send for SendFnPtr<T>
+    {
+    }
+
+    impl_pointer!(SendFnPtr);
+}
+
+#[cfg(feature = "fnptr")]
+pub use fnptr::*;
+
+#[cfg(doctest)]
+#[cfg(feature = "fnptr")]
+#[doc = include_str!("../README.md")]
+struct ReadmeDocTests;

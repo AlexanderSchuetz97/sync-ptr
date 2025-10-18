@@ -5,6 +5,7 @@ use alloc::{format, vec};
 use core::ffi::c_void;
 use core::ptr::null_mut;
 use std::mem;
+use std::mem::{align_of, size_of};
 use sync_ptr::*;
 
 #[test]
@@ -179,7 +180,7 @@ fn example() {
 
 #[test]
 fn test_addr() {
-    let test_addr: *const usize = std::ptr::dangling();
+    let test_addr: *const usize = 5158485 as _;
     let sync = test_addr.as_sync_const();
     assert_eq!(sync.as_address(), test_addr as usize);
 }
@@ -188,6 +189,12 @@ fn test_addr() {
 extern "C" fn test_function() -> u64 {
     123456u64
 }
+
+#[inline(always)]
+#[cfg(feature = "fnptr")]
+extern "C" fn test_function2() -> u64 {
+    1234567u64
+}
 #[test]
 fn test_function_pointer() {
     let test_fn_ptr: SyncMutPtr<c_void> = SyncMutPtr::new(test_function as *mut c_void);
@@ -195,6 +202,173 @@ fn test_function_pointer() {
         unsafe { mem::transmute::<*mut c_void, extern "C" fn() -> u64>(test_fn_ptr.inner()) }();
 
     assert_eq!(result, test_function());
+}
+
+#[test]
+#[cfg(feature = "fnptr")]
+fn test_function_pointer2() {
+    let test_fn_ptr = sync_fn_ptr!(extern "C" fn() -> u64, test_function);
+    assert!(!test_fn_ptr.is_null());
+    assert_eq!(test_fn_ptr(), test_function());
+}
+
+#[test]
+#[cfg(feature = "fnptr")]
+fn test_function_pointer3() {
+    let n = test_function as *const c_void;
+
+    let test_fn_ptr = unsafe { sync_fn_ptr_from_addr!(extern "C" fn() -> u64, n) };
+
+    assert!(!test_fn_ptr.is_null());
+    assert_eq!(test_fn_ptr(), test_function());
+}
+
+#[test]
+#[cfg(feature = "fnptr")]
+fn test_function_pointer_null() {
+    let test_fn_ptr = unsafe { sync_fn_ptr_from_addr!(extern "C" fn() -> u64, 0) };
+
+    assert!(test_fn_ptr.is_null());
+
+    let r = std::panic::catch_unwind(move || {
+        test_fn_ptr();
+    });
+
+    assert!(r.is_err());
+
+    let test_fn_ptr2 = SyncFnPtr::<extern "C" fn() -> u64>::default();
+
+    let r = std::panic::catch_unwind(move || {
+        test_fn_ptr2();
+    });
+
+    assert!(r.is_err());
+
+    assert_eq!(test_fn_ptr, test_fn_ptr2);
+}
+
+#[test]
+#[cfg(feature = "fnptr")]
+fn test_function_pointer_equal() {
+    let n = test_function as *const c_void;
+    let test_fn_ptr = unsafe { sync_fn_ptr_from_addr!(extern "C" fn() -> u64, n) };
+    let test_fn_ptr2 = sync_fn_ptr!(extern "C" fn() -> u64, test_function);
+
+    //Compiler doesn't guarantee this...
+    //assert_eq!(test_fn_ptr, test_fn_ptr2);
+    //assert_eq!(test_fn_ptr.as_address(), test_fn_ptr2.as_address());
+
+    if test_fn_ptr == test_fn_ptr2
+        || test_fn_ptr.as_address() == test_fn_ptr2.as_address()
+        || n as usize == test_function as usize
+    {
+        //But this is guaranteed
+        assert_eq!(test_fn_ptr, test_fn_ptr2);
+        assert_eq!(test_fn_ptr.as_address(), test_fn_ptr2.as_address());
+    }
+
+    let test_fn_ptr3 = sync_fn_ptr!(extern "C" fn() -> u64, test_function2);
+    assert_ne!(test_fn_ptr, test_fn_ptr3);
+    assert_ne!(test_fn_ptr.as_address(), test_fn_ptr3.as_address());
+}
+
+#[test]
+fn snd_test_function_pointer() {
+    let test_fn_ptr: SendMutPtr<c_void> = SendMutPtr::new(test_function as *mut c_void);
+    let result =
+        unsafe { mem::transmute::<*mut c_void, extern "C" fn() -> u64>(test_fn_ptr.inner()) }();
+
+    assert_eq!(result, test_function());
+}
+
+#[test]
+#[cfg(feature = "fnptr")]
+fn snd_test_function_pointer2() {
+    let test_fn_ptr = send_fn_ptr!(extern "C" fn() -> u64, test_function);
+    assert!(!test_fn_ptr.is_null());
+    assert_eq!(test_fn_ptr(), test_function());
+}
+
+#[test]
+#[cfg(feature = "fnptr")]
+fn snd_test_function_pointer3() {
+    let n = test_function as *const c_void;
+
+    let test_fn_ptr = unsafe { send_fn_ptr_from_addr!(extern "C" fn() -> u64, n) };
+
+    assert!(!test_fn_ptr.is_null());
+    assert_eq!(test_fn_ptr(), test_function());
+}
+
+#[test]
+#[cfg(feature = "fnptr")]
+fn snd_test_function_pointer_null() {
+    let test_fn_ptr = unsafe { send_fn_ptr_from_addr!(extern "C" fn() -> u64, 0) };
+
+    assert!(test_fn_ptr.is_null());
+    assert!(test_fn_ptr.is_null());
+    assert_eq!(test_fn_ptr.as_address(), 0);
+    assert_eq!(test_fn_ptr.as_raw_ptr(), std::ptr::null());
+    assert!(test_fn_ptr.inner().is_none());
+
+    let r = std::panic::catch_unwind(move || {
+        test_fn_ptr();
+    });
+
+    assert!(r.is_err());
+
+    let test_fn_ptr2 = SendFnPtr::<extern "C" fn() -> u64>::default();
+
+    assert!(test_fn_ptr2.is_null());
+    assert_eq!(test_fn_ptr2.as_address(), 0);
+    assert_eq!(test_fn_ptr2.as_raw_ptr(), std::ptr::null());
+    assert!(test_fn_ptr2.inner().is_none());
+    let r = std::panic::catch_unwind(move || {
+        test_fn_ptr2();
+    });
+
+    assert!(r.is_err());
+
+    assert_eq!(test_fn_ptr, test_fn_ptr2);
+
+    let test_fn_ptr3 = SendFnPtr::<extern "C" fn() -> u64>::null();
+    assert!(test_fn_ptr3.is_null());
+    assert_eq!(test_fn_ptr3.as_address(), 0);
+    assert_eq!(test_fn_ptr3.as_raw_ptr(), std::ptr::null());
+    assert!(test_fn_ptr3.inner().is_none());
+
+    let r = std::panic::catch_unwind(move || {
+        test_fn_ptr3();
+    });
+
+    assert!(r.is_err());
+
+    assert_eq!(test_fn_ptr, test_fn_ptr3);
+}
+
+#[test]
+#[cfg(feature = "fnptr")]
+fn snd_test_function_pointer_equal() {
+    let n = test_function as *const c_void;
+    let test_fn_ptr = unsafe { send_fn_ptr_from_addr!(extern "C" fn() -> u64, n) };
+    let test_fn_ptr2 = send_fn_ptr!(extern "C" fn() -> u64, test_function);
+
+    //Compiler doesn't guarantee this...
+    //assert_eq!(test_fn_ptr, test_fn_ptr2);
+    //assert_eq!(test_fn_ptr.as_address(), test_fn_ptr2.as_address());
+
+    if test_fn_ptr == test_fn_ptr2
+        || test_fn_ptr.as_address() == test_fn_ptr2.as_address()
+        || n as usize == test_function as usize
+    {
+        //But this is guaranteed
+        assert_eq!(test_fn_ptr, test_fn_ptr2);
+        assert_eq!(test_fn_ptr.as_address(), test_fn_ptr2.as_address());
+    }
+
+    let test_fn_ptr3 = send_fn_ptr!(extern "C" fn() -> u64, test_function2);
+    assert_ne!(test_fn_ptr, test_fn_ptr3);
+    assert_ne!(test_fn_ptr.as_address(), test_fn_ptr3.as_address());
 }
 
 #[test]
@@ -228,17 +402,15 @@ fn test_fmt() {
 #[cfg(target_has_atomic = "32")]
 #[test]
 fn test_mt() {
-    use core::sync::atomic::AtomicU32;
-    use core::sync::atomic::Ordering::SeqCst;
-
     unsafe {
-        let n = AtomicU32::new(123);
-        let ptr = n.as_ptr().as_sync_mut();
+        let n = Box::into_raw(Box::new(123));
+        let ptr = n.as_sync_mut();
         let jh = std::thread::spawn(move || {
             assert_eq!(123, ptr.read_volatile());
             ptr.write_volatile(456);
         });
         jh.join().unwrap();
-        assert_eq!(n.load(SeqCst), 456);
+        assert_eq!(n.read_volatile(), 456);
+        _ = Box::from_raw(n);
     }
 }
