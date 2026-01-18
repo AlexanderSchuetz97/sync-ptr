@@ -249,7 +249,7 @@ fn test_function_pointer_null() {
 
 #[test]
 #[cfg(feature = "fnptr")]
-fn test_function_pointer_equal() {
+fn test_function_pointer_equal_sync() {
     let n = test_function as *const c_void;
     let test_fn_ptr = unsafe { sync_fn_ptr_from_addr!(extern "C" fn() -> u64, n) };
     let test_fn_ptr2 = sync_fn_ptr!(extern "C" fn() -> u64, test_function);
@@ -262,12 +262,35 @@ fn test_function_pointer_equal() {
         || test_fn_ptr.as_address() == test_fn_ptr2.as_address()
         || n as usize == test_function as usize
     {
-        //But this is guaranteed
-        assert_eq!(test_fn_ptr, test_fn_ptr2);
         assert_eq!(test_fn_ptr.as_address(), test_fn_ptr2.as_address());
+        assert_eq!(test_fn_ptr, test_fn_ptr2);
     }
 
     let test_fn_ptr3 = sync_fn_ptr!(extern "C" fn() -> u64, test_function2);
+    assert_ne!(test_fn_ptr, test_fn_ptr3);
+    assert_ne!(test_fn_ptr.as_address(), test_fn_ptr3.as_address());
+}
+
+#[test]
+#[cfg(feature = "fnptr")]
+fn test_function_pointer_equal_send() {
+    let n = test_function as *const c_void;
+    let test_fn_ptr = unsafe { send_fn_ptr_from_addr!(extern "C" fn() -> u64, n) };
+    let test_fn_ptr2 = send_fn_ptr!(extern "C" fn() -> u64, test_function);
+
+    //Compiler doesn't guarantee this...
+    //assert_eq!(test_fn_ptr, test_fn_ptr2);
+    //assert_eq!(test_fn_ptr.as_address(), test_fn_ptr2.as_address());
+
+    if test_fn_ptr == test_fn_ptr2
+        || test_fn_ptr.as_address() == test_fn_ptr2.as_address()
+        || n as usize == test_function as usize
+    {
+        assert_eq!(test_fn_ptr.as_address(), test_fn_ptr2.as_address());
+        assert_eq!(test_fn_ptr, test_fn_ptr2);
+    }
+
+    let test_fn_ptr3 = send_fn_ptr!(extern "C" fn() -> u64, test_function2);
     assert_ne!(test_fn_ptr, test_fn_ptr3);
     assert_ne!(test_fn_ptr.as_address(), test_fn_ptr3.as_address());
 }
@@ -413,4 +436,17 @@ fn test_mt() {
         assert_eq!(n.read_volatile(), 456);
         _ = Box::from_raw(n);
     }
+}
+
+#[test]
+#[cfg(feature = "fnptr")]
+fn test_fn_ptr_opt() {
+    let ffi_fn: Option<extern "C" fn() -> u64> = Some(test_function);
+    let sync = sync_fn_ptr_opt!(extern "C" fn() -> u64, ffi_fn);
+    let send = send_fn_ptr_opt!(extern "C" fn() -> u64, ffi_fn);
+    let jh = std::thread::spawn(move || sync());
+    assert_eq!(123456u64, jh.join().unwrap());
+
+    let jh = std::thread::spawn(move || send());
+    assert_eq!(123456u64, jh.join().unwrap());
 }

@@ -116,9 +116,11 @@ This makes the wrappers suitable for use in FFI structs.
 Unfortunately the trait `core::marker::FnPtr` is unstable, this prevents this crate from providing
 a convenient safe constructor function for the wrappers.
 
-The only way to construct the wrappers (other than using null/default) is using one of the 4 provided macros:
+The only way to construct the wrappers (other than using null/default) is using one of the 6 provided macros:
 - `send_fn_ptr!` - For use with rust functions only
 - `sync_fn_ptr!` - For use with rust functions only
+- `send_fn_ptr_opt!` - For use with rust function only that are already in the common ffi Option<fn()> type.
+- `sync_fn_ptr_opt!` - For use with rust function only that are already in the common ffi Option<fn()> type.
 - `send_fn_ptr_from_addr!` - For use with usize/raw pointer
 - `sync_fn_ptr_from_addr!` - For use with usize/raw pointer
 

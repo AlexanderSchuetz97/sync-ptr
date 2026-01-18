@@ -961,7 +961,6 @@ mod fnptr {
     ///
     /// use std::ffi::c_void;
     /// use sync_ptr::sync_fn_ptr;
-    /// use sync_ptr::SyncFnPtr;
     ///
     /// extern "C" fn test_function() -> u64 {
     ///     123456u64
@@ -969,7 +968,7 @@ mod fnptr {
     ///
     /// fn some_other_function() {
     ///     let test_fn_ptr = sync_fn_ptr!(extern "C" fn() -> u64, test_function);
-    ///     //Type of test_fn_ptr is SendFnPtr<extern "C" fn() -> u64>
+    ///     //Type of test_fn_ptr is SyncFnPtr<extern "C" fn() -> u64>
     ///     std::thread::spawn(move || {
     ///         assert_eq!(test_fn_ptr(), test_function());
     ///     }).join().unwrap();
@@ -979,19 +978,66 @@ mod fnptr {
     #[macro_export]
     macro_rules! sync_fn_ptr {
         ($sig:ty, $var:expr) => {{
-            let x = $var as $sig;
+            // This dance is needed to make it clear to the compiler that we may use
+            // This function pointer with ffi.
+            // In most architectures this is a noop and gets optimized out.
+            let x = $var as *const core::ffi::c_void;
+
+            //Safety: the compiler ensures that $sig is FnPtr.
+            let x : $sig = unsafe { core::mem::transmute(x) };
+
             _ = move || {
                 //Workaround to ensure T is core::marker::FnPtr, which is unfortunately unstable.
                 _ = core::ptr::fn_addr_eq(x, x);
             };
 
             //The compiler should optimize this out, as this should always hold true.
-            assert!(core::mem::size_of::<SyncFnPtr::<$sig>>() == core::mem::size_of::<$sig>());
+            assert!(
+                core::mem::size_of::<$crate::SyncFnPtr::<$sig>>() == core::mem::size_of::<$sig>()
+            );
 
             //Safety: SyncFnPtr has repr(transparent)
-            let n: SyncFnPtr<$sig> = unsafe { core::mem::transmute(Some(x)) };
+            let n: $crate::SyncFnPtr<$sig> = unsafe { core::mem::transmute(Some(x)) };
 
             n
+        }};
+    }
+
+    ///
+    /// This macro creates a Function Pointer that is Send+Sync and guaranteed to have the same representation
+    /// in memory as a raw function pointer would. (Meaning its size is usize)
+    ///
+    /// This macro operates on an `Optional<fn()>` as input.
+    /// This type is commonly used in ffi for nullable function pointers.
+    ///
+    /// # Example
+    /// ```rust
+    ///
+    /// use std::ffi::c_void;
+    /// use sync_ptr::sync_fn_ptr_opt;
+    ///
+    /// type CallbackFn = extern "C" fn() -> u64;
+    ///
+    /// fn some_other_function(some_callback: Option<CallbackFn>) {
+    ///     let test_fn_ptr = sync_fn_ptr_opt!(CallbackFn, some_callback);
+    ///     // Type of test_fn_ptr is SyncFnPtr<extern "C" fn() -> u64>,
+    ///     // or rather SyncFnPtr<CallbackFn>
+    ///     std::thread::spawn(move || {
+    ///         if !test_fn_ptr.is_null() {
+    ///             println!("{}", test_fn_ptr())
+    ///         }
+    ///     }).join().unwrap();
+    /// }
+    /// ```
+    ///
+    #[macro_export]
+    macro_rules! sync_fn_ptr_opt {
+        ($sig:ty, $var:expr) => {{
+            if let Some(f) = $var {
+                $crate::sync_fn_ptr!($sig, f)
+            } else {
+                $crate::SyncFnPtr::null()
+            }
         }};
     }
 
@@ -1016,7 +1062,6 @@ mod fnptr {
     ///
     /// use std::ffi::c_void;
     /// use sync_ptr::sync_fn_ptr_from_addr;
-    /// use sync_ptr::SyncFnPtr;
     ///
     /// extern "C" fn test_function() -> u64 {
     ///     123456u64
@@ -1038,14 +1083,14 @@ mod fnptr {
     ($sig:ty, $var:expr) => {
         {
             //The compiler should optimize this out, as this should always hold true.
-            assert!(core::mem::size_of::<SyncFnPtr::<$sig>>() == core::mem::size_of::<$sig>());
+            assert!(core::mem::size_of::<$crate::SyncFnPtr::<$sig>>() == core::mem::size_of::<$sig>());
 
             let ptr = $var as *const core::ffi::c_void;
             if ptr.is_null() {
-                SyncFnPtr::<$sig>::default()
+                $crate::SyncFnPtr::<$sig>::default()
             } else {
                 //Safety: Only safe if var is a function pointer.
-                let x : $sig = core::mem::transmute($var as *const core::ffi::c_void);
+                let x : $sig = core::mem::transmute(ptr);
 
                 _ = move || {
                     //Workaround to ensure T is core::marker::FnPtr, which is unfortunately unstable.
@@ -1085,7 +1130,6 @@ mod fnptr {
     ///
     /// use std::ffi::c_void;
     /// use sync_ptr::send_fn_ptr;
-    /// use sync_ptr::SendFnPtr;
     ///
     /// extern "C" fn test_function() -> u64 {
     ///     123456u64
@@ -1103,19 +1147,66 @@ mod fnptr {
     #[macro_export]
     macro_rules! send_fn_ptr {
         ($sig:ty, $var:expr) => {{
-            let x = $var as $sig;
+            // This dance is needed to make it clear to the compiler that we may use
+            // This function pointer with ffi.
+            // In most architectures this is a noop and gets optimized out.
+            let x = $var as *const core::ffi::c_void;
+
+            //Safety: the compiler ensures that $sig is FnPtr.
+            let x : $sig = unsafe { core::mem::transmute(x) };
+
             _ = move || {
                 //Workaround to ensure T is core::marker::FnPtr, which is unfortunately unstable.
                 _ = core::ptr::fn_addr_eq(x, x);
             };
 
             //The compiler should optimize this out, as this should always hold true.
-            assert!(core::mem::size_of::<SendFnPtr::<$sig>>() == core::mem::size_of::<$sig>());
+            assert!(
+                core::mem::size_of::<$crate::SendFnPtr::<$sig>>() == core::mem::size_of::<$sig>()
+            );
 
             //Safety: SyncFnPtr has repr(transparent)
-            let n: SendFnPtr<$sig> = unsafe { core::mem::transmute(Some(x)) };
+            let n: $crate::SendFnPtr<$sig> = unsafe { core::mem::transmute(Some(x)) };
 
             n
+        }};
+    }
+
+    ///
+    /// This macro creates a Function Pointer that is Send+Sync and guaranteed to have the same representation
+    /// in memory as a raw function pointer would. (Meaning its size is usize)
+    ///
+    /// This macro operates on an `Optional<fn()>` as input.
+    /// This type is commonly used in ffi for nullable function pointers.
+    ///
+    /// # Example
+    /// ```rust
+    ///
+    /// use std::ffi::c_void;
+    /// use sync_ptr::send_fn_ptr_opt;
+    ///
+    /// type CallbackFn = extern "C" fn() -> u64;
+    ///
+    /// fn some_other_function(some_callback: Option<CallbackFn>) {
+    ///     let test_fn_ptr = send_fn_ptr_opt!(CallbackFn, some_callback);
+    ///     // Type of test_fn_ptr is SendFnPtr<extern "C" fn() -> u64>,
+    ///     // or rather SendFnPtr<CallbackFn>
+    ///     std::thread::spawn(move || {
+    ///         if !test_fn_ptr.is_null() {
+    ///             println!("{}", test_fn_ptr())
+    ///         }
+    ///     }).join().unwrap();
+    /// }
+    /// ```
+    ///
+    #[macro_export]
+    macro_rules! send_fn_ptr_opt {
+        ($sig:ty, $var:expr) => {{
+            if let Some(f) = $var {
+                $crate::send_fn_ptr!($sig, f)
+            } else {
+                $crate::SendFnPtr::null()
+            }
         }};
     }
 
@@ -1140,7 +1231,6 @@ mod fnptr {
     ///
     /// use std::ffi::c_void;
     /// use sync_ptr::send_fn_ptr_from_addr;
-    /// use sync_ptr::SendFnPtr;
     ///
     /// extern "C" fn test_function() -> u64 {
     ///     123456u64
@@ -1161,14 +1251,14 @@ mod fnptr {
     ($sig:ty, $var:expr) => {
         {
             //The compiler should optimize this out, as this should always hold true.
-            assert!(core::mem::size_of::<SendFnPtr::<$sig>>() == core::mem::size_of::<$sig>());
+            assert!(core::mem::size_of::<$crate::SendFnPtr::<$sig>>() == core::mem::size_of::<$sig>());
 
             let ptr = $var as *const core::ffi::c_void;
             if ptr.is_null() {
-                SendFnPtr::<$sig>::default()
+                $crate::SendFnPtr::<$sig>::default()
             } else {
                 //Safety: Only safe if var is a function pointer.
-                let x : $sig = core::mem::transmute($var as *const core::ffi::c_void);
+                let x : $sig = core::mem::transmute(ptr);
 
                 _ = move || {
                     //Workaround to ensure T is core::marker::FnPtr, which is unfortunately unstable.
