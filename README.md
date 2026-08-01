@@ -1,3 +1,6 @@
+# Repo was moved to Codeberg
+https://codeberg.org/AlexanderSchuetz97/sync-ptr
+
 # sync-ptr
 Sync & Send wrappers for raw pointer's and function pointers in rust.
 
